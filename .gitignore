@@ -5,3 +5,12 @@
 *.pyc
 *.cc
 *.Atimestamp*
+/rysunki/xmds_out/gem1d
+/rysunki/xmds_out/run.sh
+/rysunki/xmds_out/sim.log
+/xmds_out/gem_rydberg1d
+/xmds_out/gem1d
+/xmds_out/gem2d
+/xmds_out/run.sh
+/xmds_out/rydberg1d
+/xmds_out/sim.log
