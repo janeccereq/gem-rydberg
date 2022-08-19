@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simulation xmds-version="2">
+    <name>rydberg1d</name>
+    <author>WW</author>
+    <description>
+        eit 2 fotony
+    </description>
+    <features>
+        <benchmark/>
+        <error_check/>
+        <bing/>
+        <fftw plan="patient"/>
+        <globals>
+        <![CDATA[
+           void load_from_binary_file(char const*const fname, std::string Atimestamp, void * dst, size_t size) {{
+                FILE* fpBinary;
+                std::string pathname = "../init_data/" + Atimestamp + "/" + fname;
+                if ((fpBinary = fopen(pathname.c_str(), "rb")) == NULL)
+                _LOG(_ERROR_LOG_LEVEL, "Unable to open input  file %s\n", pathname.c_str());
+               auto rsize=fread(dst, 1, size, fpBinary);
+               if (rsize!=size)
+                _LOG(_ERROR_LOG_LEVEL, "problem reading %s: rsize=%d != requested %d\n", pathname.c_str(), (int) rsize, (int) size);
+               fclose(fpBinary);
+            }}
+            complex *Cpl_t = NULL; // coupling
+            complex *Mod_zt = NULL; // modulacja
+            complex GammaP, VR;
+        ]]>
+        </globals>
+        <arguments append_args_to_output_filename="yes">
+            <argument name="GammaP_re" type="real" default_value="0.0"/>
+            <argument name="GammaP_im" type="real" default_value="0.0"/>
+            <argument name="c0" type="real" default_value="1"/>
+            <argument name="grv" type="real" default_value="1"/>
+            <argument name="c6" type="real" default_value="1e-3"/>
+            <argument name="Vmax" type="real" default_value="1e-3"/>
+            <argument name="zsteps" type="int" default_value="100"/>
+            <argument name="zradious" type="real" default_value="5"/>
+            <argument name="tmax" type="real" default_value="5"/>
+            <argument name="Atimestamp" type="string" default_value="''"/>
+            <![CDATA[
+                GammaP = complex(GammaP_re, GammaP_im);
+            ]]>
+        </arguments>
+        <validation kind="run-time"/>
+    </features>
+
+    <geometry>
+        <propagation_dimension>t</propagation_dimension>
+        <transverse_dimensions>
+            <dimension name="z1" lattice="zsteps" domain="(-zradious, zradious)" transform="dft" />
+            <dimension name="z2" lattice="zsteps" domain="(-zradious, zradious)" transform="dft"/>
+        </transverse_dimensions>
+    </geometry>
+
+    <vector name="main" dimensions="z1 z2" type="complex">
+       <components>SS</components><!-- spin-wave -->
+    </vector>
+    <vector name="elpol" dimensions="z1 z2" type="complex">
+       <components>EP</components><!-- atomic polarization -->
+    </vector>
+    <vector name="elsp" dimensions="z1 z2" type="complex">
+       <components>ES</components><!-- atomic polarization -->
+    </vector>
+    <vector name="polsp" dimensions="z1 z2" type="complex">
+       <components>PS</components><!-- atomic polarization -->
+    </vector>
+    <vector name="polpol" dimensions="z1 z2" type="complex">
+       <components>PP</components><!-- atomic polarization -->
+    </vector>
+    <vector name="cross1" dimensions="z1 z2" type="complex">
+        <components>EE</components><!-- slabe pole -->
+    </vector>
+    <vector name="vec_n_at" dimensions="z1" type="real">
+        <components>n_at</components><!-- gestosc atomow -->
+    </vector>
+    <vector name="vec_n_at2" dimensions="z2" type="real">
+        <components>n_at2</components><!-- gestosc atomow -->
+    </vector>
+    <computed_vector name="Coupling" dimensions="" type="complex">
+    <components> Cpl </components>
+    <evaluation><!-- laser zewnetrzny -->
+      <dependencies basis=""></dependencies>
+      <![CDATA[
+        real nt=(t/tmax)*{tsteps};
+        int it=int(nt);
+        real c=nt-it;
+        Cpl = (1-c)*Cpl_t[it] + c*Cpl_t[it+1];
+      ]]>
+    </evaluation>
+    </computed_vector>
+
+    <computed_vector name="Modulation" dimensions="z1" type="complex">
+        <components> Mod </components>
+        <evaluation><!-- laser zewnetrzny -->
+          <dependencies basis="z1"></dependencies>
+          <![CDATA[
+            real nt=(t/tmax)*{tsteps};
+            int it=int(nt);
+            real c=nt-it;
+            long zt_index =  _index_z1 * ({tsteps}+2) + it;
+            Mod = (1-c) * Mod_zt[zt_index] + c * Mod_zt[zt_index + 1];
+          ]]>
+        </evaluation>
+    </computed_vector>
+
+    <computed_vector name="Interaction" dimensions="z1 z2" type="complex">
+        <components> VMod </components>
+        <evaluation><!-- laser zewnetrzny -->
+          <dependencies basis="z1"> Modulation </dependencies>
+          <![CDATA[
+          complex Mod2 = _active_z1_Modulation[(0+_index_z2*1) * _z1_Modulation_ncomponents + 0];
+          real r = abs(z1-z2);
+          real r_3 = r*r*r;
+          real r_6 = r_3*r_3;
+          real V = c6 / r_6;
+          if(V > Vmax) V = Vmax;
+          VMod = Mod + Mod2 + i * V;
+          ]]>
+        </evaluation>
+    </computed_vector>
+
+   <computed_vector name="tranposes" dimensions="z1 z2" type="complex" >
+    <components> PE SP SE </components>
+    <evaluation>
+      <dependencies basis="z1 z1"> elpol elsp polsp </dependencies>
+      <![CDATA[
+      long tr_index = _index_z1 + _index_z2*_lattice_z1;
+        PE = _active_z1z2_elpol[tr_index];
+        SE = _active_z1z2_elsp[tr_index];
+        SP = _active_z1z2_polsp[tr_index];
+      ]]>
+    </evaluation>
+  </computed_vector>
+
+    <sequence>
+        <filter name="load_initial_data">
+           <dependencies></dependencies>
+           <![CDATA[
+            std::string fnameE = "../init_data/" + Atimestamp;
+            Cpl_t = (complex*) xmds_malloc(sizeof(complex) * ({tsteps}+2)); // coupling
+            Mod_zt = (complex*) xmds_malloc(sizeof(complex) * ({tsteps}+2) * zsteps); // modulacja
+            load_from_binary_file("EE_init.bin",Atimestamp,_active_z1z2_cross1,_z1z2_cross1_alloc_size*sizeof(complex));
+            load_from_binary_file("Cpl_t_init.bin",Atimestamp,Cpl_t,({tsteps}+2)*sizeof(complex));
+            load_from_binary_file("n_at.bin",Atimestamp,_active_z1_vec_n_at,_z1_vec_n_at_alloc_size*sizeof(real));
+            load_from_binary_file("n_at.bin",Atimestamp,_active_z2_vec_n_at2,_z1_vec_n_at_alloc_size*sizeof(real));
+            load_from_binary_file("Mod_zt.bin",Atimestamp,Mod_zt,zsteps*({tsteps}+2)*sizeof(complex));
+            load_from_binary_file("SS_init.bin",Atimestamp,_active_z1z2_main,_z1z2_main_alloc_size*sizeof(complex));
+            load_from_binary_file("EP_init.bin",Atimestamp,_active_z1z2_elpol,_z1z2_elpol_alloc_size*sizeof(complex));
+            load_from_binary_file("ES_init.bin",Atimestamp,_active_z1z2_elsp,_z1z2_elsp_alloc_size*sizeof(complex));
+            load_from_binary_file("PS_init.bin",Atimestamp,_active_z1z2_polsp,_z1z2_polsp_alloc_size*sizeof(complex));
+            load_from_binary_file("PP_init.bin",Atimestamp,_active_z1z2_polpol,_z1z2_polpol_alloc_size*sizeof(complex));
+           ]]>
+        </filter>
+        <integrate algorithm="ARK89" interval="tmax" steps="{tsteps}" tolerance="1.0e0">
+            <operators>
+                <dependencies>Coupling Modulation Interaction tranposes vec_n_at vec_n_at2</dependencies>
+                <operator kind="ip" constant="yes">
+                    <operator_names>Lz12</operator_names>
+                    <![CDATA[
+                        Lz12 = i * (c0 + grv) * (kz1+kz2);
+                    ]]>
+                </operator>
+                <operator kind="ip" constant="yes">
+                    <operator_names>Lz1vz2</operator_names>
+                    <![CDATA[
+                        Lz1vz2 = i * (c0 + grv) * kz1 + i * grv * kz2;
+                    ]]>
+                </operator>
+                <operator kind="ip" constant="yes">
+                    <operator_names>Lvz12</operator_names>
+                    <![CDATA[
+                        Lvz12 = i * grv * (kz1 + kz2);
+                    ]]>
+                </operator>
+                <integration_vectors>main elpol elsp polsp polpol cross1</integration_vectors>
+                <![CDATA[;
+                    complex Mod2 = _active_z1_Modulation[(0+_index_z2*1) * _z1_Modulation_ncomponents + 0];
+                    dEE_dt = Lz12[EE] + i * (n_at2 * EP + n_at * PE);
+                    dEP_dt = Lz1vz2[EP] - GammaP * EP + i * EE + i*n_at*PP +i*Cpl*ES;
+                    dES_dt = Lz1vz2[ES] + Mod2*ES + i*n_at*PS + i*conj(Cpl)*EP;
+                    dPS_dt = Lvz12[PS] - GammaP*PS + Mod2*PS + i*ES + i*Cpl*SS + i*conj(Cpl)*PP;
+                    dPP_dt = Lvz12[PP] - 2*GammaP*PP + i*(EP+PE) + i*Cpl*(PS+SP);
+                    dSS_dt = Lvz12[SS] + i*conj(Cpl)*(PS+SP) - VMod*SS;
+
+                    // dE_dt = Lz[E] + i * n_at * P ;
+                    // dP_dt = - GammaP * P + i * E + i * Cpl * S;
+                    // dS_dt = Mod * S + i * conj(Cpl) * P;
+                ]]>
+            </operators>
+            <samples>{tsteps}</samples>
+        </integrate>
+    </sequence>
+    <output format="binary">
+        <group>
+            <sampling basis="z1 z2" initial_sample="no">
+            <moments> SSR SSI EER EEI PPR PPI ESR ESI PSR PSI EPR EPI</moments>
+            <dependencies> main cross1 polpol elpol elsp polsp</dependencies>
+                <![CDATA[
+                    _SAMPLE_COMPLEX(SS);
+                    _SAMPLE_COMPLEX(EE);
+                    _SAMPLE_COMPLEX(PP);
+                    _SAMPLE_COMPLEX(ES);
+                    _SAMPLE_COMPLEX(PS);
+                    _SAMPLE_COMPLEX(EP);
+                ]]>
+            </sampling>
+        </group>
+    </output>
+</simulation>

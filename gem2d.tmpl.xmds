@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simulation xmds-version="2">
+    <name>gem2d</name>
+    <author>WW</author>
+    <description>
+        uproszczona symulacja 1+2d (t + z,x)
+    </description>
+    <features>
+    <benchmark/>
+    <error_check/>
+    <bing/>
+    <fftw plan="patient"/>
+    <globals>
+    <![CDATA[
+        void load_from_binary_file(char const*const fname, std::string Atimestamp, void * dst, size_t size) {{
+            FILE* fpBinary;
+            std::string pathname = "../init_data/" + Atimestamp + "/" + fname;
+            if ((fpBinary = fopen(pathname.c_str(), "rb")) == NULL)
+            _LOG(_ERROR_LOG_LEVEL, "Unable to open input  file %s\n", pathname.c_str());
+            auto rsize=fread(dst, 1, size, fpBinary);
+            if (rsize!=size)
+            _LOG(_ERROR_LOG_LEVEL, "problem reading %s: rsize=%d != requested %d\n", pathname.c_str(), (int) rsize, (int) size);
+            fclose(fpBinary);
+        }}
+
+        complex *E0_xt = NULL; // seed
+        complex *Cpl_xt = NULL; // coupling
+        complex *Mod_zxt = NULL; // modulacja
+        complex CErho, CrhoE, Srho;
+        real kEz;
+    ]]>
+    </globals>
+
+    <arguments append_args_to_output_filename="yes">
+		<argument name="Atimestamp" type="string" default_value="''"/>
+        <argument name="kE" type="real" default_value="7800.0"/>
+        <argument name="kEx" type="real" default_value="0.0"/>
+        <argument name="CErho_re" type="real" default_value="0.1"/>
+        <argument name="CErho_im" type="real" default_value="0.0"/>
+        <argument name="CrhoE_re" type="real" default_value="-0.1"/>
+        <argument name="CrhoE_im" type="real" default_value="0.0"/>
+        <argument name="Srho_re" type="real" default_value="0.0"/>
+		<argument name="Srho_im" type="real" default_value="0.0"/>
+        <argument name="xsteps" type="int" default_value="100"/>
+        <argument name="xradious" type="real" default_value="0.5"/>
+        <argument name="zsteps" type="int" default_value="100"/>
+        <argument name="zradious" type="real" default_value="5"/>
+        <argument name="tmax" type="real" default_value="5"/>
+        <![CDATA[
+            CErho = complex(CErho_re,CErho_im);
+            CrhoE = complex(CrhoE_re,CrhoE_im);
+			Srho = complex(Srho_re,Srho_im);
+            kEz = sqrt(kE*kE-kEx*kEx);
+        ]]>
+    </arguments>
+    <validation kind="run-time"/>
+    </features>
+
+    <geometry>
+        <propagation_dimension>t</propagation_dimension>
+        <transverse_dimensions>
+        <dimension name="z" lattice="zsteps" domain="(-zradious,zradious)"/>
+        <dimension name="x" lattice="xsteps" domain="(-xradious,xradious)"/>
+        </transverse_dimensions>
+    </geometry>
+
+    <vector name="main" initial_space="z x" type="complex">
+       <components>rho12</components><!-- rho12 -->
+    </vector>
+    <vector name="cross1" initial_space="x" type="complex">
+        <components>E</components><!-- slabe pole -->
+    </vector>
+    <vector name="vec_n_at" initial_space="z x" type="real" dimensions="z x">
+        <components>n_at</components><!-- gestosc atomow -->
+    </vector>
+    <computed_vector name="Coupling" dimensions="x" type="complex">
+    <components> Cpl </components>
+    <evaluation><!-- laser zewnetrzny -->
+      <dependencies basis="x"></dependencies>
+      <![CDATA[
+        real nt=(t/tmax)*{tsteps};
+        int it=int(nt);
+        real c=nt-it;
+        long xt_index =  _index_x * ({tsteps}+2) + it;
+        Cpl = (1-c) * Cpl_xt[xt_index] + c * Cpl_xt[xt_index + 1];
+      ]]>
+    </evaluation>
+  </computed_vector>
+
+  <computed_vector name="Modulation" dimensions="z x" type="complex">
+    <components> Mod </components>
+    <evaluation><!-- laser zewnetrzny -->
+      <dependencies basis="z x"></dependencies>
+      <![CDATA[
+        real nt=(t/tmax)*{tsteps};
+        int it=int(nt);
+        real c=nt-it;
+        long zxt_index = _index_z * xsteps * ({tsteps}+2) + _index_x * ({tsteps}+2) + it;
+        Mod = (1-c)*Mod_zxt[zxt_index] + c*Mod_zxt[zxt_index + 1];
+      ]]>
+    </evaluation>
+  </computed_vector>
+
+    <sequence>
+        <filter name="load_initial_data">
+           <dependencies></dependencies>
+           <![CDATA[
+             std::string fnameE = "../init_data/" + Atimestamp;
+             E0_xt = (complex*) xmds_malloc(sizeof(complex)*xsteps*({tsteps}+2));
+             Cpl_xt = (complex*) xmds_malloc(sizeof(complex)*xsteps*({tsteps}+2));
+             Mod_zxt = (complex*) xmds_malloc(sizeof(complex)*xsteps*({tsteps}+2)*zsteps);
+             load_from_binary_file("E_init.bin",Atimestamp, E0_xt, xsteps*({tsteps}+2)*sizeof(complex));
+             load_from_binary_file("Cpl.bin",Atimestamp,Cpl_xt, xsteps*({tsteps}+2)*sizeof(complex));
+             load_from_binary_file("Mod.bin",Atimestamp,Mod_zxt,xsteps*zsteps*({tsteps}+2)*sizeof(complex));
+             load_from_binary_file("n_at.bin",Atimestamp,_active_zx_vec_n_at,_zx_vec_n_at_alloc_size*sizeof(real));
+             load_from_binary_file("rho12_init.bin",Atimestamp,_active_zx_main,_zx_main_alloc_size*sizeof(complex));
+           ]]>
+        </filter>
+        <integrate algorithm="ARK89" interval="tmax" steps="{tsteps}" tolerance="1.0e0">
+            <operators>
+                <dependencies>Coupling Modulation</dependencies>
+                <operator kind="cross_propagation" algorithm="RK4" propagation_dimension="z">
+                    <dependencies>main vec_n_at Coupling</dependencies>
+                    <integration_vectors>cross1</integration_vectors>
+                    <boundary_condition kind="left">
+                        <dependencies></dependencies>
+                        <![CDATA[
+                            real nt=(t/tmax)*{tsteps};
+                            int it=int(nt);
+                            real c=nt-it;
+                            long xt_index =  _index_x * ({tsteps}+2) + it;
+                            E = (1-c)*E0_xt[xt_index] + c*E0_xt[xt_index + 1];
+                        ]]>
+                    </boundary_condition>
+                    <operator kind="ip" constant="yes">
+                        <operator_names>Lxx</operator_names>
+                        <![CDATA[
+                            // Lxx=i*(sqrt(kE*kE-kx*kx)-kE);
+                            real kx_ = kx+kEx;
+                            real kz = sqrt(kE*kE-kx_*kx_);
+                            Lxx=i*(kz - kEz + kx*kEx/kEz );
+                        ]]>
+                    </operator>
+                    <![CDATA[
+                        dE_dz = n_at * CErho * (E + Cpl * rho12) + Lxx[E];
+                    ]]>
+                </operator>
+                <integration_vectors>main</integration_vectors>
+                <![CDATA[
+                    drho12_dt = (mod2(Cpl) * Srho + Mod) * rho12 + Cpl * CrhoE * E;
+                ]]>
+            </operators>
+            <samples>{tsteps} {tsteps}</samples>
+        </integrate>
+    </sequence>
+    <output format="binary">
+        <group>
+            <sampling basis="z x" initial_sample="no">
+            <moments> rho12R rho12I ER EI </moments>
+            <dependencies> main cross1 </dependencies>
+                <![CDATA[
+                    _SAMPLE_COMPLEX(rho12);
+                    _SAMPLE_COMPLEX(E);
+                ]]>
+            </sampling>
+        </group>
+        <group>
+            <sampling basis="kz x" initial_sample="no">
+            <moments> rho12kzR rho12kzI </moments>
+            <dependencies>main</dependencies>
+            <![CDATA[
+            rho12kzR = rho12.Re();
+            rho12kzI = rho12.Im();
+            ]]>
+            </sampling>
+        </group>
+    </output>
+</simulation>

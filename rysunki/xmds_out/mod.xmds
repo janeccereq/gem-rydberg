@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<simulation xmds-version="2">
+    <name>gem1d</name>
+    <author>WW</author>
+    <description>
+        uproszczona symulacja 1+1d (t + z) + GEM
+    </description>
+    <features>
+    <benchmark/>
+    <error_check/>
+    <bing/>
+    <fftw plan="patient"/>
+    <globals>
+    <![CDATA[
+        void load_from_binary_file(char const*const fname, std::string Atimestamp, void * dst, size_t size) {
+            FILE* fpBinary;
+            std::string pathname = "../init_data/" + Atimestamp + "/" + fname;
+            if ((fpBinary = fopen(pathname.c_str(), "rb")) == NULL)
+            _LOG(_ERROR_LOG_LEVEL, "Unable to open input  file %s\n", pathname.c_str());
+            auto rsize=fread(dst, 1, size, fpBinary);
+            if (rsize!=size)
+            _LOG(_ERROR_LOG_LEVEL, "problem reading %s: rsize=%d != requested %d\n", pathname.c_str(), (int) rsize, (int) size);
+            fclose(fpBinary);
+        }
+
+        complex *E0_t = NULL; // seed
+        complex *Cpl_t = NULL; // coupling
+        complex *Mod_zt = NULL; // modulacja
+        complex CErho, CrhoE, SCpl, SE;
+    ]]>
+    </globals>
+
+    <arguments append_args_to_output_filename="yes">
+        <argument name="CErho_re" type="real" default_value="0.1"/>
+        <argument name="CErho_im" type="real" default_value="0.0"/>
+        <argument name="CrhoE_re" type="real" default_value="-0.1"/>
+        <argument name="CrhoE_im" type="real" default_value="0.0"/>
+        <argument name="SCpl_re" type="real" default_value="0.0"/>
+        <argument name="SCpl_im" type="real" default_value="0.0"/>
+        <argument name="Atimestamp" type="string" default_value="''"/>
+        <argument name="zsteps" type="int" default_value="100"/>
+        <argument name="zradious" type="real" default_value="5"/>
+        <argument name="tmax" type="real" default_value="5"/>
+        <![CDATA[
+            CErho = complex(CErho_re, CErho_im);
+            CrhoE = complex(CrhoE_re, CrhoE_im);
+            SCpl = complex(SCpl_re, SCpl_im);
+        ]]>
+    </arguments>
+    <validation kind="run-time"/>
+    </features>
+
+    <geometry>
+        <propagation_dimension>t</propagation_dimension>
+        <transverse_dimensions>
+        <dimension name="z" lattice="zsteps" domain="(-zradious, zradious)" transform = "dft"/>
+        </transverse_dimensions>
+    </geometry>
+
+    <vector name="main" initial_space="z" type="complex">
+       <components>rho12</components><!-- rho12 -->
+    </vector>
+    <vector name="cross1" type="complex">
+        <components>E</components><!-- slabe pole -->
+    </vector>
+    <vector name="vec_n_at" initial_space="z" type="real" dimensions="z">
+        <components>n_at</components><!-- gestosc atomow -->
+    </vector>
+    <computed_vector name="Coupling" dimensions="" type="complex">
+    <components> Cpl </components>
+    <evaluation><!-- laser zewnetrzny -->
+      <dependencies basis=""></dependencies>
+      <![CDATA[
+        real nt=(t/tmax)*300;
+        int it=int(nt);
+        real c=nt-it;
+        Cpl = (1-c)*Cpl_t[it] + c*Cpl_t[it+1];
+      ]]>
+    </evaluation>
+  </computed_vector>
+
+  <computed_vector name="Modulation" dimensions="z" type="complex">
+    <components> Mod </components>
+    <evaluation><!-- laser zewnetrzny -->
+      <dependencies basis="z"></dependencies>
+      <![CDATA[
+        real nt=(t/tmax)*300;
+        int it=int(nt);
+        real c=nt-it;
+        long zt_index =  _index_z * (300+2) + it;
+        Mod = (1-c) * Mod_zt[zt_index] + c * Mod_zt[zt_index + 1];
+      ]]>
+    </evaluation>
+  </computed_vector>
+
+
+    <sequence>
+        <filter name="load_initial_data">
+           <dependencies></dependencies>
+           <![CDATA[
+             std::string fnameE = "../init_data/" + Atimestamp;
+             E0_t = (complex*) xmds_malloc(sizeof(complex) * (300+2));
+             Cpl_t = (complex*) xmds_malloc(sizeof(complex) * (300+2));
+             Mod_zt = (complex*) xmds_malloc(sizeof(complex) * (300+2) * zsteps);
+             load_from_binary_file("E_init.bin",Atimestamp, E0_t, (300+2)*sizeof(complex));
+             load_from_binary_file("Cpl.bin",Atimestamp,Cpl_t,(300+2)*sizeof(complex));
+             load_from_binary_file("Mod.bin",Atimestamp,Mod_zt,zsteps*(300+2)*sizeof(complex));
+             load_from_binary_file("n_at.bin",Atimestamp,_active_z_vec_n_at,_z_vec_n_at_alloc_size*sizeof(real));
+             load_from_binary_file("rho12_init.bin",Atimestamp,_active_z_main,_z_main_alloc_size*sizeof(complex));
+
+           ]]>
+        </filter>
+        <!--
+        <breakpoint filename="smpl2d_bp_grid_main.xsil" format="binary">
+            <dependencies>main</dependencies>
+        </breakpoint> -->
+        <integrate algorithm="ARK89" interval="tmax" steps="300" tolerance="1.0e0">
+            <operators>
+                <dependencies>Coupling Modulation</dependencies>
+                <operator kind="cross_propagation" algorithm="RK4" propagation_dimension="z">
+                    <dependencies>main vec_n_at Coupling</dependencies>
+                    <integration_vectors>cross1</integration_vectors>
+                    <boundary_condition kind="left">
+                        <dependencies></dependencies>
+                        <![CDATA[
+                            real nt=(t/tmax)*300;
+                            int it=int(nt);
+                            real c=nt-it;
+                            E = (1-c)*E0_t[it] + c*E0_t[it+1];
+                        ]]>
+                    </boundary_condition>
+                    <![CDATA[
+                        dE_dz = conj(Cpl) * n_at * CErho * rho12;
+                    ]]>
+                </operator>
+                <integration_vectors>main</integration_vectors>
+                <![CDATA[
+                    drho12_dt = Cpl * CrhoE * E
+                        + (mod2(Cpl) * SCpl + Mod) * rho12;
+                ]]>
+            </operators>
+            <samples>300 300</samples>
+        </integrate>
+    </sequence>
+    <output format="binary">
+        <group>
+            <sampling basis="z" initial_sample="no">
+            <moments> rho12R rho12I ER EI </moments>
+            <dependencies> main cross1 </dependencies>
+                <![CDATA[
+                    _SAMPLE_COMPLEX(rho12);
+                    _SAMPLE_COMPLEX(E);
+                ]]>
+            </sampling>
+        </group>
+        <group>
+            <sampling basis="kz" initial_sample="no">
+            <moments> rho12kzR rho12kzI </moments>
+            <dependencies>main</dependencies>
+            <![CDATA[
+            rho12kzR = rho12.Re();
+            rho12kzI = rho12.Im();
+            ]]>
+            </sampling>
+        </group>
+    </output>
+</simulation>
