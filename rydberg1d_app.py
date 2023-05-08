@@ -12,22 +12,23 @@ dr= r[1] - r[0]
 kr = np.fft.fftfreq(len(r), dr) * 2 * np.pi
 
 rb = 0.05
-Vr = 1/(1-2*1j*(r/rb)**6)
+coeff = np.sqrt(12)/rb
+Vr = coeff/(1+(r/rb)**6)
 EE0 = np.ones_like(r) + 0j
 
 Rsteps = 2000
-dR = 0.0005
+dR = 0.0001
 ODL = 5 / rb
 OmG = 0.2
-CVR = ODL
-CVr = OmG ** 2 * 4 / ODL
-Cr =  4 / ODL
+CVR = -1j
+CVr = 0
+Cr =  4j/coeff
 
 kr2 = -kr * kr
 dif = np.exp(-Cr * kr * kr * dR)
 
-dVr = 12*1j*rb**6*r**5/(rb**6-2*1j*r**6)**2
-ddVr = 60*1j*r**4/rb**6/(1-2*1j*(r/rb)**6)**2-288*r**10/rb**12/(1-2*1j*(r/rb)**6)**3
+dVr = -6*r**5*rb**6*coeff/(r**6+rb**6)**2
+ddVr = 6*r**4*rb**6*(7*r**6-5*rb**6)*coeff/(r**6+rb**6)**3
 
 loc = np.exp(-(CVR * Vr - CVr * ddVr) * dR)
 
@@ -52,12 +53,19 @@ for step in range(Rsteps):
     EE.append(EE3)
 
 #%%
-R = np.linspace(-dR * Rsteps / 2, dR * Rsteps / 2, Rsteps)
+R = np.linspace(0, dR * Rsteps, Rsteps)
 import matplotlib.pyplot as plt
 plt.title('$|EE|^2$')
 plt.xlabel('r [$mm$]')
 plt.ylabel('R [$mm$]')
-plt.pcolormesh(r, R, np.abs(EE[1:])**2, cmap='Reds')
+cmap = plt.pcolormesh(r, R, np.abs(EE[1:])**2, cmap='BrBG')
+plt.colorbar(cmap)
+plt.xlim(-4*rb, 4*rb)
+plt.ylim(0, 0.12)
 plt.show()
 
 #%%
+cmap = plt.pcolormesh(r, R, np.angle(EE[1:]), cmap="twilight_shifted")
+plt.colorbar(cmap)
+plt.xlim(-4*rb, 4*rb)
+plt.ylim(0, 0.12)

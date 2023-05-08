@@ -215,7 +215,7 @@ class SliceWindow(QtGui.QMainWindow):
     status = QtCore.Signal(object)
     newData = QtCore.Signal(object)
     def __init__(self):
-        self.app = pg.QtGui.QApplication.instance()
+        self.app = pg.QtWidgets.QApplication.instance()
         assert self.app, "run %gui qt5 prior to loading display"
         super(self.__class__, self).__init__()
         self.cw = QtGui.QWidget(self)
